@@ -1,199 +1,174 @@
-name: build
-
-on:
-  push:
-    branches:
-      - '**'
-    paths-ignore:
-      - '**.md'
-  pull_request:
-    branches:
-      - '**'
-    paths-ignore:
-      - '**.md'
-
 jobs:
   prep:
-    runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.init.outputs.version }}
       release: ${{ steps.init.outputs.release }}
+      version: ${{ steps.init.outputs.version }}
+    runs-on: self-hosted
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Init
-        id: init
-        run: |
-          VERSION=$(grep "version" gradle.properties | cut -d'=' -f2)
-          echo ::set-output name=version::${VERSION}
-          if [[ $VERSION =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo ::set-output name=release::true
-          else
-            echo ::set-output name=release::false
-          fi
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      id: init
+      name: Init
+      run: "VERSION=$(grep \"version\" gradle.properties | cut -d'=' -f2)\necho ::set-output\
+        \ name=version::${VERSION}\nif [[ $VERSION =~ ^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$\
+        \ ]]; then\n  echo ::set-output name=release::true\nelse\n  echo ::set-output\
+        \ name=release::false\nfi\n"
+  release:
+    if: github.event_name != 'pull_request' && needs.prep.outputs.release == 'true'
+    needs: prep
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - continue-on-error: true
+      name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-package: jdk
+        java-version: 17
+    - continue-on-error: true
+      name: Cache deps
+      uses: actions/cache@v4
+      with:
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+        path: ~/.gradle/caches
+        restore-keys: '${{ runner.os }}-gradle-
 
+          '
+    - continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      name: Set up Git
+      run: 'git config user.name GitHub
+
+        git config user.email noreply@github.com
+
+        git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+
+        '
+    - continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      if: success()
+      name: Release
+      run: "./gradlew clean release \\\n  -Prelease.useAutomaticVersion=true \\\n\
+        \  -Prelease.releaseVersion=${{ needs.prep.outputs.version }}\n"
+    - continue-on-error: true
+      if: success()
+      name: Archive artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: release
+        path: build/libs/*.jar
+    - continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      if: success()
+      name: GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: 'build/libs/*.jar
+
+          '
+        name: ${{ needs.prep.outputs.version }}
+        tag_name: ${{ needs.prep.outputs.version }}
   snapshot:
     needs: prep
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      name: Set up Java ${{ matrix.java }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-package: jdk
+        java-version: ${{ matrix.java }}
+    - continue-on-error: true
+      name: Cache deps
+      uses: actions/cache@v4
+      with:
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+        path: ~/.gradle/caches
+        restore-keys: '${{ runner.os }}-gradle-
+
+          '
+    - continue-on-error: true
+      name: Build
+      run: './gradlew clean build
+
+        '
+    - continue-on-error: true
+      if: success() && matrix.java == '17'
+      name: Archive artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: snapshot
+        path: build/libs/*.jar
     strategy:
       fail-fast: false
       matrix:
         java:
-          - 17
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-      -
-        name: Set up Java ${{ matrix.java }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ matrix.java }}
-          java-package: jdk
-          distribution: 'zulu'
-      -
-        name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/caches
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-      -
-        name: Build
-        run: |
-          ./gradlew clean build
-      -
-        name: Archive artifact
-        if: success() && matrix.java == '17'
-        uses: actions/upload-artifact@v4
-        with:
-          name: snapshot
-          path: build/libs/*.jar
-
-  release:
-    needs: prep
-    if: github.event_name != 'pull_request' && needs.prep.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      -
-        name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          java-version: 17
-          java-package: jdk
-          distribution: 'zulu'
-      -
-        name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/caches
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-      -
-        name: Set up Git
-        run: |
-          git config user.name GitHub
-          git config user.email noreply@github.com
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Release
-        if: success()
-        run: |
-          ./gradlew clean release \
-            -Prelease.useAutomaticVersion=true \
-            -Prelease.releaseVersion=${{ needs.prep.outputs.version }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      -
-        name: Archive artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: release
-          path: build/libs/*.jar
-      -
-        name: GitHub Release
-        uses: softprops/action-gh-release@v2
-        if: success()
-        with:
-          name: ${{ needs.prep.outputs.version }}
-          tag_name: ${{ needs.prep.outputs.version }}
-          draft: true
-          files: |
-            build/libs/*.jar
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+        - 17
   sonar:
     needs: prep
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      -
-        name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      -
-        name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          java-version: 17
-          java-package: jdk
-          distribution: 'zulu'
-      -
-        name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/caches
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-      -
-        name: Test and Sonar
-        if: ${{ env.SONAR_TOKEN != null }}
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ./gradlew test sonar \
-              -Dsonar.gradle.skipCompile=true \
-              -Dsonar.pullrequest.provider=github \
-              -Dsonar.pullrequest.github.repository=${{ github.repository }} \
-              -Dsonar.host.url=https://sonarcloud.io \
-              -Dsonar.organization=${SONAR_ORG_KEY} \
-              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-              -Dsonar.pullrequest.key=${{ github.event.number }} \
-              -Dsonar.pullrequest.base=${{ github.base_ref }}
-          elif [ "${{ needs.prep.outputs.release }}" = 'true' ]; then
-            ./gradlew test sonar \
-              -Dsonar.gradle.skipCompile=true \
-              -Dsonar.pullrequest.provider=github \
-              -Dsonar.pullrequest.github.repository=${{ github.repository }} \
-              -Dsonar.host.url=https://sonarcloud.io \
-              -Dsonar.organization=${SONAR_ORG_KEY} \
-              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-              -Dsonar.projectVersion=${{ needs.prep.outputs.version }}
-          else
-            ./gradlew test sonar \
-              -Dsonar.gradle.skipCompile=true \
-              -Dsonar.pullrequest.provider=github \
-              -Dsonar.pullrequest.github.repository=${{ github.repository }} \
-              -Dsonar.host.url=https://sonarcloud.io \
-              -Dsonar.organization=${SONAR_ORG_KEY} \
-              -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-              -Dsonar.branch.name=${GITHUB_REF##*/}
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ORG_KEY: ${{ secrets.SONAR_ORG_KEY }}
-          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - continue-on-error: true
+      name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-package: jdk
+        java-version: 17
+    - continue-on-error: true
+      name: Cache deps
+      uses: actions/cache@v4
+      with:
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
+        path: ~/.gradle/caches
+        restore-keys: '${{ runner.os }}-gradle-
+
+          '
+    - continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_ORG_KEY: ${{ secrets.SONAR_ORG_KEY }}
+        SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      if: ${{ env.SONAR_TOKEN != null }}
+      name: Test and Sonar
+      run: "if [ \"${{ github.event_name }}\" = \"pull_request\" ]; then\n  ./gradlew\
+        \ test sonar \\\n    -Dsonar.gradle.skipCompile=true \\\n    -Dsonar.pullrequest.provider=github\
+        \ \\\n    -Dsonar.pullrequest.github.repository=${{ github.repository }} \\\
+        \n    -Dsonar.host.url=https://sonarcloud.io \\\n    -Dsonar.organization=${SONAR_ORG_KEY}\
+        \ \\\n    -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\\n    -Dsonar.pullrequest.key=${{\
+        \ github.event.number }} \\\n    -Dsonar.pullrequest.base=${{ github.base_ref\
+        \ }}\nelif [ \"${{ needs.prep.outputs.release }}\" = 'true' ]; then\n  ./gradlew\
+        \ test sonar \\\n    -Dsonar.gradle.skipCompile=true \\\n    -Dsonar.pullrequest.provider=github\
+        \ \\\n    -Dsonar.pullrequest.github.repository=${{ github.repository }} \\\
+        \n    -Dsonar.host.url=https://sonarcloud.io \\\n    -Dsonar.organization=${SONAR_ORG_KEY}\
+        \ \\\n    -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\\n    -Dsonar.projectVersion=${{\
+        \ needs.prep.outputs.version }}\nelse\n  ./gradlew test sonar \\\n    -Dsonar.gradle.skipCompile=true\
+        \ \\\n    -Dsonar.pullrequest.provider=github \\\n    -Dsonar.pullrequest.github.repository=${{\
+        \ github.repository }} \\\n    -Dsonar.host.url=https://sonarcloud.io \\\n\
+        \    -Dsonar.organization=${SONAR_ORG_KEY} \\\n    -Dsonar.projectKey=${SONAR_PROJECT_KEY}\
+        \ \\\n    -Dsonar.branch.name=${GITHUB_REF##*/}\nfi\n"
+name: build
+on:
+  repository_dispatch:
+    types: trigger-ga___build.yml
